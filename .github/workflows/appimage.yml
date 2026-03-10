@@ -35,7 +35,18 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ros-${{ matrix.ros_distro }}-ros-core ros-${{ matrix.ros_distro }}-tf2-msgs
 
+      - name: Patch rclgo for Humble
+        if: matrix.ros_distro == 'humble'
+        run: |
+          # tiiuae/rclgo (original) supports Humble; PolibaX fork only supports Jazzy
+          find . -name '*.go' -exec sed -i 's|github.com/PolibaX/rclgo|github.com/tiiuae/rclgo|g' {} +
+          sed -i 's|github.com/PolibaX/rclgo|github.com/tiiuae/rclgo|g' go.mod go.sum
+          sed -i 's|v0.0.0-20240816145631-537ed4c4f353|v0.0.0-20260225085354-508dd42245da|g' go.mod
+          rm go.sum
+          go mod tidy
+
       - name: Generate message bindings
+        if: matrix.ros_distro != 'humble'
         run: |
           source /opt/ros/${{ matrix.ros_distro }}/setup.bash
           go generate ./...
