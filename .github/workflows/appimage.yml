@@ -1,0 +1,87 @@
+name: AppImage
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  appimage:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            ros_distro: humble
+          - os: ubuntu-24.04
+            ros_distro: jazzy
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install ROS 2 ${{ matrix.ros_distro }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y software-properties-common curl
+          sudo curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME) main" | sudo tee /etc/apt/sources.list.d/ros2.list > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y ros-${{ matrix.ros_distro }}-ros-core ros-${{ matrix.ros_distro }}-tf2-msgs
+
+      - name: Generate message bindings
+        run: |
+          source /opt/ros/${{ matrix.ros_distro }}/setup.bash
+          go generate ./...
+
+      - name: Build binary
+        run: |
+          source /opt/ros/${{ matrix.ros_distro }}/setup.bash
+          source cgo-flags.env
+          CGO_ENABLED=1 go build -v -ldflags "-s -w -X main.version=${{ github.ref_name }}" -o tftree-cli .
+
+      - name: Prepare AppDir
+        run: |
+          mkdir -p AppDir/usr/bin AppDir/usr/lib
+          cp tftree-cli AppDir/usr/bin/
+          cp packaging/AppRun AppDir/
+          cp packaging/tftree-cli.desktop AppDir/
+          cp packaging/tftree-cli.png AppDir/
+
+          # Bundle ROS 2 shared libraries
+          for lib in $(ldd AppDir/usr/bin/tftree-cli | grep '/opt/ros\|librcl\|librmw\|librosidl\|librcutils\|libfastcdr\|libfastdds\|libfoonathan\|libtinyxml2\|libspdlog\|libfmt\|libyaml\|libament' | awk '{print $3}'); do
+            cp -L "$lib" AppDir/usr/lib/ 2>/dev/null || true
+          done
+
+          # Also bundle any transitive deps from /opt/ros
+          for lib in AppDir/usr/lib/*.so*; do
+            for dep in $(ldd "$lib" 2>/dev/null | grep '/opt/ros' | awk '{print $3}'); do
+              cp -L "$dep" AppDir/usr/lib/ 2>/dev/null || true
+            done
+          done
+
+      - name: Download appimagetool
+        run: |
+          curl -sSL -o appimagetool https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool
+
+      - name: Build AppImage
+        run: |
+          ARCH=x86_64 ./appimagetool --appimage-extract-and-run --no-appstream AppDir tftree-cli-${{ matrix.ros_distro }}-x86_64.AppImage
+
+      - name: Upload AppImage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tftree-cli-appimage-${{ matrix.ros_distro }}
+          path: tftree-cli-${{ matrix.ros_distro }}-x86_64.AppImage
+
+      - name: Upload to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: tftree-cli-${{ matrix.ros_distro }}-x86_64.AppImage
