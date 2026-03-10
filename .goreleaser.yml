@@ -1,0 +1,46 @@
+version: 2
+
+project_name: tftree-cli
+
+builds:
+  - main: .
+    binary: tftree-cli
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        format: zip
+
+nfpms:
+  - package_name: tftree-cli
+    homepage: https://github.com/Maverobot/tftree-cli
+    description: Terminal-based ROS 2 TF tree viewer
+    license: MIT
+    formats:
+      - deb
+      - rpm
+      - apk
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
