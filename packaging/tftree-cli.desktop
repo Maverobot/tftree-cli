@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=tftree-cli
+Comment=Terminal-based ROS 2 TF tree viewer
+Exec=tftree-cli
+Icon=tftree-cli
+Terminal=true
+Categories=Development;RoboticsEngineering;
