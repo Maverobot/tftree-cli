@@ -92,8 +92,7 @@ func runLiveMode(nodeName string, refresh time.Duration, outputFile string) {
 	var (
 		latestParentOf map[string]string
 		mu             sync.Mutex
-		timer          *time.Timer
-		rendered       bool
+		dirty          bool
 	)
 
 	sub := tftree.NewTFSubscriber(nodeName)
@@ -103,17 +102,27 @@ func runLiveMode(nodeName string, refresh time.Duration, outputFile string) {
 	onChange := func(parentOf map[string]string) {
 		mu.Lock()
 		latestParentOf = parentOf
-		if timer != nil {
-			timer.Reset(refresh)
-		} else {
-			timer = time.AfterFunc(refresh, func() {
-				mu.Lock()
-				snapshot := latestParentOf
-				mu.Unlock()
+		dirty = true
+		mu.Unlock()
+	}
 
-				if snapshot == nil {
-					return
+	// Render loop: check for new data at fixed intervals
+	go func() {
+		ticker := time.NewTicker(refresh)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				mu.Lock()
+				if !dirty {
+					mu.Unlock()
+					continue
 				}
+				snapshot := latestParentOf
+				dirty = false
+				mu.Unlock()
 
 				tree := tftree.NewTree(snapshot)
 				if isTTY {
@@ -121,17 +130,13 @@ func runLiveMode(nodeName string, refresh time.Duration, outputFile string) {
 				}
 				tree.Render(os.Stdout)
 
-				// Non-TTY: print once and exit
 				if !isTTY {
-					mu.Lock()
-					rendered = true
-					mu.Unlock()
 					stop()
+					return
 				}
-			})
+			}
 		}
-		mu.Unlock()
-	}
+	}()
 
 	err := sub.Run(ctx, onChange)
 	if err != nil && ctx.Err() == nil {
@@ -140,16 +145,12 @@ func runLiveMode(nodeName string, refresh time.Duration, outputFile string) {
 		os.Exit(1)
 	}
 
-	// Stop debounce timer to prevent late-firing race with final render
+	// Final render on exit
 	mu.Lock()
-	if timer != nil {
-		timer.Stop()
-	}
 	finalParentOf := latestParentOf
-	alreadyRendered := rendered
 	mu.Unlock()
 
-	if finalParentOf != nil && !alreadyRendered {
+	if finalParentOf != nil {
 		tree := tftree.NewTree(finalParentOf)
 		if isTTY {
 			fmt.Print("\033[2J\033[H")
@@ -159,9 +160,6 @@ func runLiveMode(nodeName string, refresh time.Duration, outputFile string) {
 		if outputFile != "" {
 			saveToFile(tree, outputFile)
 		}
-	} else if finalParentOf != nil && outputFile != "" {
-		tree := tftree.NewTree(finalParentOf)
-		saveToFile(tree, outputFile)
 	}
 }
 
